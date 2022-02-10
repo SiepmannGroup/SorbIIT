@@ -1,0 +1,5 @@
+taichi
+numpy
+h5py
+pytorch_lightning
+scipy matplotlib
