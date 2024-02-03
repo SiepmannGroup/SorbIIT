@@ -4,7 +4,7 @@ import torch
 from scipy.optimize import curve_fit
 import scipy
 from torch.utils.data import Dataset
-from utils import CellGrid3, get_ztb, get_traj_all, quadratic, langmuir
+from utils import CellGrid3, get_ztb, get_traj_all, solve_quadratic, solve_langmuir, calculate_cell_vectors
 
 
 # profile flag
@@ -41,6 +41,8 @@ class SpatialDerivativeDataset(Dataset):
         normalize_all=False,
         symmetrize_in_place=True,
         return_symmetrize_func=False,
+        solver="quadratic"
+
     ):
         self.atoms = g_atoms
         self.pool = pool
@@ -70,6 +72,11 @@ class SpatialDerivativeDataset(Dataset):
         self.normalize_all = normalize_all
         self.return_symmetrize_func = return_symmetrize_func
         self.symmetrize_in_place = symmetrize_in_place
+        if solver.lower() not in ("langmuir", "quadratic"):
+            raise NotImplementedError
+        self.solver = solver
+        # cache current metadata
+        self.info = None
 
     def __len__(self):
         return len(self.keys)
@@ -88,16 +95,36 @@ class SpatialDerivativeDataset(Dataset):
             x[:2] = -(x[:2] - self.x_mean) / self.x_std
             if self.normalize_all:
                 y[0] = (torch.log(torch.clamp(y[0], min=self.EPS)) - self.y_ext_mean) / self.y_ext_std
-                y[1:] = y[1:] / self.y_int_std
+            y[1:] = y[1:] / self.y_int_std
         else:
             x[:, :2] = -(x[:, :2] - self.x_mean) / self.x_std
             if self.normalize_all:
                 y[:, 0] = (torch.log(torch.clamp(y[:, 0], min=self.EPS)) - self.y_ext_mean) / self.y_ext_std
-                y[:, 1:] = y[:, 1:] / self.y_int_std
+            y[:, 1:] = y[:, 1:] / self.y_int_std
         return x, y
-            
+
+    def unnormalize(self, y):
+        y[:, 1:] = y[:, 1:] * self.y_int_std
+        if self.normalize_all:
+            y[:, 0] = torch.exp(y[:, 0] * self.y_ext_std + self.y_ext_mean)
+        return y
+
     def set_keys(self, keys):
         self.keys = keys
+
+    def get_all_trajctories(self, key, ncell=None):
+        if ncell is None:
+            _, egrid, ncell = get_ztb(self.ztb_path, key, self.atoms)
+            del egrid
+        log("--SOLVE: reading voxels---")
+        ps, ts = len(self.log_p), len(self.inv_t)
+        with h5py.File(self.movie_file, 'r') as h5file:
+            info, voxels_all = get_traj_all(h5file, key, ps, ts)
+        log("--SOLVE: pooling---")
+        with torch.no_grad():
+            voxels_all = torch.unsqueeze(torch.from_numpy(voxels_all), 0) / ncell
+            voxels_all = torch.nn.functional.avg_pool3d(voxels_all, self.pool, self.pool, 0) * self.pool ** 3
+        return info, voxels_all
         
     def subset(self, keys):
         subset = SpatialDerivativeDataset(
@@ -109,62 +136,15 @@ class SpatialDerivativeDataset(Dataset):
         return subset
             
     def solve_derivatives(self, key, ncell):
-        log("--SOLVE: reading voxels---")
         ps, ts = len(self.log_p), len(self.inv_t)
-        vol_cell = (0.1 * self.pool) ** 3
-        with h5py.File(self.movie_file, 'r') as h5file:
-            info, voxels_all = get_traj_all(h5file, key, ps, ts)
-        grid_sizes = np.array(info["grid_sizes"]) // self.pool
-        log("--SOLVE: pooling---")
-        
-        with torch.no_grad():
-            voxels_all = torch.unsqueeze(torch.from_numpy(voxels_all), 0) / ncell
-            voxels_all = torch.nn.functional.avg_pool3d(voxels_all, self.pool, self.pool, 0) * self.pool ** 3
-
-        log("--SOLVE: global fit---")
-        
-        p_fit, t_fit = np.meshgrid(self.log_p, self.inv_t, indexing='ij')
-        x_fit = np.stack([p_fit, t_fit]).reshape(2, -1)
-        # use unit of molec / AA^3
-        # 1 molecule per cubic angstrom = 1661 mol / L
-        y_tot = torch.mean(voxels_all.view(ps * ts, -1), 1).numpy() / vol_cell 
-        func = quadratic
-        popt, pcov = curve_fit(func, x_fit, y_tot, bounds=(-5000, 5000), loss='linear', max_nfev=50000)
-        y_pred = func(x_fit, *popt)
-        #print("Zeolite:", key, "Capacity (mol/L):", 2 * np.exp(popt[0]) * 1661, "R2:", r2_score(y_tot, y_pred))
-        log("--SOLVE: local fit---")
-        # differentiating quadratic isotherm
-        Q = np.exp(popt[0])
-        h1, s1, h2, s2 = tuple(popt[1:])
-        info["isotherm_coeffs"] = popt
-
-        logp, invT = x_fit[0], x_fit[1]
-        k1 = np.exp(h1 * invT + s1 + logp)
-        k2 = np.exp(h2 * invT + s2 + 2 * logp)
-
-        theta = k1 / (1 + k1 + k2)
-        gamma = 2 * k2 / (1 + k1 + k2)
-        
-        ngrid = np.prod(grid_sizes)
-
-        # only regress non-zero entries
-        mask = torch.any(voxels_all.reshape([-1] + grid_sizes.tolist()) > 0, 0).flatten()
-
-        # Coefficients: dQ, dS1, dH1, dS2, dH2
-        c0 = theta + gamma
-        c1 = theta * (1 - theta - gamma)
-        c2 = c1 * invT
-        c3 = gamma * (1 - (theta + gamma) / 2)
-        c4 = c3 * invT
-        A = np.stack([c0, c1, c2, c3, c4], axis=1)
-        B = voxels_all.numpy().reshape(ps * ts, -1) / (Q * vol_cell) # need to convert density-based Q back to number
-        X = torch.zeros((A.shape[1], B.shape[1]))
-        B = B[:, mask]
-        X_active, _, _, _ = scipy.linalg.lstsq(A, B)
-        X[:, mask] = torch.from_numpy(X_active.astype(np.float32))
-        
-        return info, X.view(-1, *grid_sizes)
-    
+        self.info, voxels_all = self.get_all_trajctories(key, ncell)
+        solver_func = solve_langmuir if self.solver == "langmuir" else solve_quadratic
+        X, popt, void_frac = solver_func(self.log_p, self.inv_t, voxels_all, self.pool)
+        self.info["isotherm_coeffs"] = popt
+        self.info["void_fraction"] = void_frac
+        # y_pred = func(x_fit, *popt)
+        # print("Zeolite:", key, "Capacity (mol/L):", 2 * np.exp(popt[0]) * 1661, "R2:", r2_score(y_tot, y_pred))
+        return self.info, X
     
     def get_samplers(self, index):
         key = self.keys[index]
@@ -175,20 +155,18 @@ class SpatialDerivativeDataset(Dataset):
         traj_info, tgrid_torch = self.solve_derivatives(key, ncell)
         log("--end solve---")
         log("--start building grid---")
-        spacing = np.array(traj_info['ortho_length']) / np.array(traj_info['grid_sizes'])
-        tgrid_trans = np.round(traj_info['translation_vector'] / spacing).astype(np.int).T
-        
-        tgrid_sampler = CellGrid3(tgrid_torch, tgrid_trans // self.pool)
+        cell_vectors = calculate_cell_vectors(traj_info, self.pool)
+        tgrid_sampler = CellGrid3(tgrid_torch, cell_vectors)
         if self.cif_path is not None and self.symmetrize_in_place:
             pos_enc = tgrid_sampler.symmetrize(self.cif_path + "/%s.cif" % key,
                 self.positional_encoding)
         
         egrid_torch = torch.cat([torch.unsqueeze(torch.from_numpy(egrid[g.name]), 0).float() for g in self.atoms], 0)
         egrid_torch = torch.nn.functional.avg_pool3d(torch.unsqueeze(egrid_torch, 0), self.pool, self.pool, 0)[0]
-        egrid_sampler = CellGrid3(egrid_torch.float(), tgrid_trans // self.pool)
+        egrid_sampler = CellGrid3(egrid_torch.float(), cell_vectors)
         if self.positional_encoding:
             egrid_sampler = CellGrid3(torch.cat([egrid_sampler.voxels, pos_enc], 0),
-                tgrid_trans // self.pool, pad=False)
+                cell_vectors, pad=False)
         log("--end building grid---")
         return egrid_sampler, tgrid_sampler
 

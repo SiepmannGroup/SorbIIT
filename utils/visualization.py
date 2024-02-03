@@ -133,4 +133,12 @@ def visualize_projection(x, y_true, y_pred, save_path=None):
     if save_path:
         plt.imsave(save_path, img_combined)
     return img_combined
+
+def generate_combined_img(y):
+    if not (y.shape[1] == y.shape[2] == y.shape[3]):
+        l_max = max(y.shape[1], y.shape[2], y.shape[3])
+        y = pad_to_cube(y, l_max)
     
+    y_proj = torch.stack((y.mean(1), y.mean(2), y.mean(3)), 2)
+    y_proj_combined = y_proj.flatten(2, 3).flatten(0, 1)
+    return y_proj_combined

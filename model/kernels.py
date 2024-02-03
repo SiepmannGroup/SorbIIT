@@ -3,7 +3,7 @@ import taichi as ti
 
 DIM = 3
 
-ti.init(arch=ti.cuda)
+ti.init(arch=ti.cpu)
 
 def wrap_indices(indices, cell_vectors):     
     for d in range(DIM - 1, -1, -1):

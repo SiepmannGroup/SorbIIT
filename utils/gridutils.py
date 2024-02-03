@@ -185,27 +185,7 @@ class CellGrid3(CellGrid):
                 np.transpose(pts + t, (2, 0, 1, 3)).reshape(-1, 3)
                 ).reshape([size]*3))
         return np.array(samples)
-    
-    def symmetry_matrices(self, tokens, cartesian=True):
-        n_ops = len(tokens)
-        # each COLUMN is a linear transformation
-        # because we operate on indices in row vectors
-        transform = np.zeros((n_ops, 4, 3)) 
-        for i, t in enumerate(tokens):
-            for d in range(3):
-                coeffs = parse_symm_op(t[d])
-                transform[i, :, d] = coeffs
-        # Fractional coordinates to Cartesian coordinates
-        M = self.cell_vectors
-        # NOTE: fractional coordinate transforms are returned
-        # when cartesian=None
-        if cartesian is True:
-            transform[:, :3, :] = np.linalg.inv(M.T) @ transform[:, :3, :] @ M.T
-            transform[:, 3:4, :] = transform[:, 3:4, :] @ M.T
-        elif cartesian is False:
-            transform[:, :3, :] = np.linalg.inv(M.T) @ transform[:, :3, :]
-        return transform
-    
+   
     def symmetry_apply(self, transform):
         ind = self.unitcell_grid(circular=True).reshape(-1, 3)
         ind_sym = torch.round(torch.from_numpy(np.matmul(ind, transform[:, :3, :]) + transform[:, 3:4, :])).long()
@@ -228,9 +208,7 @@ class CellGrid3(CellGrid):
         return torch.from_numpy(pos_enc).float()
 
     def get_symmetry_transforms(self, path, cartesian=True):
-        tokens = get_symmetry_tokens(path)
-        transform = self.symmetry_matrices(tokens, cartesian=cartesian)
-        return transform
+        return get_transforms(path, self.cell_vectors, cartesian=cartesian)
 
     def symmetrize(self, path, positional_encoding=False):
         '''
@@ -285,6 +263,27 @@ def get_symmetry_tokens(path):
             i += 1
     return symmetry_tokens
 
+def get_transforms(path, cell_vectors, cartesian=True):
+    tokens = get_symmetry_tokens(path)
+    n_ops = len(tokens)
+    # each COLUMN is a linear transformation
+    # because we operate on indices in row vectors
+    transform = np.zeros((n_ops, 4, 3)) 
+    for i, t in enumerate(tokens):
+        for d in range(3):
+            coeffs = parse_symm_op(t[d])
+            transform[i, :, d] = coeffs
+    # Fractional coordinates to Cartesian coordinates
+    M = cell_vectors
+    # NOTE: fractional coordinate transforms are returned
+    # when cartesian=None
+    if cartesian is True:
+        transform[:, :3, :] = np.linalg.inv(M.T) @ transform[:, :3, :] @ M.T
+        transform[:, 3:4, :] = transform[:, 3:4, :] @ M.T
+    elif cartesian is False:
+        transform[:, :3, :] = np.linalg.inv(M.T) @ transform[:, :3, :]
+    return transform
+
 def parse_symm_op(token):
     coeffs = [0, 0, 0, 0] # homogeneous coordinates
     neg = False
@@ -307,6 +306,11 @@ def parse_symm_op(token):
         coeffs[3] += eval(number)
     return coeffs
 
+def calculate_cell_vectors(cell_info, pool):
+    spacing = np.array(cell_info['ortho_length']) / np.array(cell_info['grid_sizes'])
+    grid_trans = np.round(cell_info['translation_vector'] / spacing).astype(np.int).T
+    cell_vectors = grid_trans // pool
+    return cell_vectors
 
 pos_basis = np.array([
     [1, 0, 0],
@@ -320,20 +324,3 @@ pos_basis = np.array([
     [0, 0, 4]
 ])
 
-
-"""
-pos_basis = np.array([
-    [1, 0, 0],
-    [0, 1, 0],
-    [0, 0, 1],
-
-])
-#    [0, 1, 1],
-#    [1, 0, 1],
-#    [1, 1, 0],
-#    [1, 1, 1],
-#    [2, 1, 1],
-#    [1, 2, 1],
-#    [1, 1, 2],
-#])
-"""

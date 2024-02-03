@@ -14,25 +14,14 @@ from utils import TraPPE
 dataset = ZTBDatasetModule(
     train_size=120,
     val_size=5,
-    atoms=[TraPPE.C_CO2, TraPPE.O_CO2],
+    molecule="CO2",
     pool_level=2,
-    window_size=(64, 64),
-    traj_path="/mnt/ssd1/andrew/vision-data/CO2-highp.h5",
-    ztb_path="/mnt/ssd0/andrew/IZASC/ff/",
-    pressures=[1, 3.2, 10, 32],
-    temperatures=[256, 270, 286, 303, 323, 343, 370, 400],
-    ntrans=0,
-    nrot=0,
-    axisrot=True,
-    cif_path="/mnt/ssd0/andrew/IZASC/cif/",
-    positional_encoding=None,
-    normalize_all=True,
-    return_symmetrize_func=True,
-    symmetrize_in_place=False,
+    solver="quadratic",
+    num_workers=4,
 )
 
 in_shape, out_shape = dataset.get_shapes()
-n_in = 2
+n_in = len(dataset.atoms)
 n_pos = in_shape[1] - n_in
 n_out = out_shape[1]
 
@@ -46,10 +35,13 @@ model = CellUNetModule(
     n_out,
     CellUNet,
     generator_config,
-    adversarial_loss="bce",
-    error_loss="mse",
+    l1_weight=1,
+    l2_weight=0,
+    bce_weight=1,
     learning_rate=1e-3,
     betas=(0.5, 0.99),
+    elu=True,
+    reg_weight=0.1,
 )
 
 
@@ -75,12 +67,12 @@ logger = MLFlowLogger(
 trainer = pl.Trainer(
     default_root_dir=os.path.join(os.getcwd(), "models", run_name),
     weights_save_path=os.path.join(os.getcwd(), "models", run_name, "checkpoints"),
-    gpus=1,#[1],
+    gpus=1,
     accumulate_grad_batches=4,
     precision=32,
     callbacks=[save_callback],
     logger=logger,
     val_check_interval=25,
 )
-
+print(model.summarize(mode="full"))
 trainer.fit(model, dataset)

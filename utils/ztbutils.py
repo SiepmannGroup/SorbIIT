@@ -1,3 +1,4 @@
+from email.mime import base
 import os
 import numpy as np
 
@@ -37,13 +38,25 @@ class TraPPE:
     '''
     Trappe force field with predefined parameters
     '''
+    # TraPPE-zeo
     Si_z = Atom('Si', 2.3, 22, 1.5, 177)
     Al_z = Atom('Al', 2.3, 22, 1.5, 177)
     P_z = Atom('P', 2.3, 22, 1.5, 177)
     O_z = Atom('O', 3.3, 53, -0.75, 178)
+    # TraPPE-UA
     CH4 = Atom("CH4", 3.73, 148, 0, 3)
+    CH3 = Atom("CH3", 3.75, 98, 0, 4)
+    CH2 = Atom("CH2", 3.95, 46, 0, 5)
+    CH = Atom("CH", 4.68, 10, 0, 6)
+    # TraPPE-Small
     O_CO2 = Atom("O", 3.05, 79, -0.35, 51)
     C_CO2 = Atom("C", 2.8, 27, 0.7, 52)
+    S_H2S = Atom("S", 3.6, 122, 0, 11)
+    H_H2S = Atom("H", 2.5, 50, 0.21, 12)
+    X_H2S = Atom("X", 0, 0, -0.42, 13)
+    # Rare gases
+    Kr = Atom("Kr", 3.63, 166.4, 0, 501)  #Kr from Talu2001
+    Xe = Atom("Xe", 4.10, 221, 0, 502) #Xe from Hirshfelder,Burtiss,Bird entry with ref J
 
 
 Z_ATOMS = {'Si': TraPPE.Si_z, 'O': TraPPE.O_z, 'Al': TraPPE.Al_z, 'P': TraPPE.P_z}
@@ -148,9 +161,10 @@ def get_ztb(path, key, g_atoms, emin=-10000, emax=10000, calc_energy=True):
     
 
 def get_traj(h5file, key):
-    shape = np.array(h5file[key]['grid_sizes'])
+    shape = h5file[key].get('grid_sizes') or h5file[key].attrs.get('grid_sizes')
+    shape = np.array(shape)
     traj = {}
-    frames = h5file[key]["frames"]
+    frames = h5file[key].get("frames") or h5file[key].attrs.get("frames")
     metadata = {}
     for u, arr in h5file[key].items():
         if u in attrs:
@@ -162,15 +176,20 @@ def get_traj(h5file, key):
             densearr[indices.astype(np.int)] = values
             densearr = densearr.reshape(shape)
             traj[u] = densearr
+    for k, v in h5file[base].attrs.items():
+        metadata[k] = np.array(v)
     return metadata, traj
 
 def get_traj_all(h5file, key, ps, ts):
     base_key = key + "-P0-T0"
-    shape = np.array(h5file[base_key]['grid_sizes'])
+    shape = h5file[base_key].get('grid_sizes') or h5file[base_key].attrs.get('grid_sizes')
+    shape = np.array(shape)
     metadata = {}
     for k, v in h5file[base_key].items():
         if k in attrs:
             metadata[k] = np.array(v)
+    for k, v in h5file[base_key].attrs.items():
+        metadata[k] = np.array(v)
     gridsize = shape[0] * shape[1] * shape[2]
     indices = []
     values = []
@@ -178,7 +197,7 @@ def get_traj_all(h5file, key, ps, ts):
         for t in range(ts):
             offset = (p * ts + t) * gridsize
             local_key = "%s-P%d-T%d" % (key, p, t)
-            frames = h5file[local_key]["frames"]
+            frames = h5file[local_key].get("frames") or h5file[local_key].attrs.get("frames")
             indices = np.concatenate([indices, offset + h5file[local_key]['COM'][0]])
             # still need to be divided by the number of unit cells
             values = np.concatenate([values, h5file[local_key]['COM'][1] / frames])

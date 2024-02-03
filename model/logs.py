@@ -23,7 +23,8 @@ def log_predicted_images(trainer, x, y_true, y_pred):
     if not (x.shape[1] == x.shape[2] == x.shape[3]):
         l_max = max(x.shape[1], x.shape[2], x.shape[3])
         x, y_true, y_pred = pad_to_cube(x, l_max), pad_to_cube(y_true, l_max), pad_to_cube(y_pred, l_max)
-
+    if x.shape[0] < 2:
+        x = torch.cat([x, torch.zeros(2 - x.shape[0], x.shape[1], x.shape[2], x.shape[3])], 0)
     if x.shape[1] != y_true.shape[1]:
         crop = (x.shape[1] - y_true.shape[1]) // 2
         x = x[:, crop:-crop, crop:-crop, crop:-crop]

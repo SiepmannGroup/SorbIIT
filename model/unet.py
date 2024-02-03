@@ -53,13 +53,14 @@ class UnitCellPad(torch.autograd.Function):
 
 class UnitCellConv3d(nn.Module):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, symmetrize=False, **kwargs):
         super().__init__()
         if "pad" in kwargs:
             self.pad = kwargs.pop("pad")
         else:
             self.pad = 0
         self.conv = nn.Conv3d(*args, **kwargs)
+        self.symmetrize = symmetrize
 
     def forward(self, x, cell_vectors, transforms):
         # pad
@@ -70,7 +71,8 @@ class UnitCellConv3d(nn.Module):
         # conv
         y = self.conv(y)
         # symmetrize
-        y = Symmetrize.apply(y, cell_vectors, transforms)
+        if self.symmetrize:
+            y = Symmetrize.apply(y, cell_vectors, transforms)
         return y
 
 class UnitCellDoubleConv(nn.Module):
@@ -126,7 +128,7 @@ class CellUNet(nn.Module):
             
         self.pool = nn.MaxPool3d(2, 2, padding=0)
         self.out = UnitCellConv3d(self.channels[2],
-            self.channels[-1], 1, stride=1, padding=0)
+            self.channels[-1], 1, stride=1, padding=0, symmetrize=True)
 
     def forward(self, x, cell_vectors, transforms, return_latent=False):
         z = self.inp(x, cell_vectors, transforms)

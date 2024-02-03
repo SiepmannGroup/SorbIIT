@@ -1,0 +1,38 @@
+ztb_path: /mnt/ssd0/andrew/IZASC/ff/
+cif_path: /mnt/ssd0/andrew/IZASC/cif/
+molecules:
+    CO2:
+        atoms: [C_CO2, O_CO2]
+        temperatures: [256, 270, 286, 303, 323, 343, 370, 400]
+        pressures: [1, 3.2, 10, 32]
+        simulation_file: /mnt/ssd1/andrew/vision-data/data/CO2-high.h5
+
+    H2S:
+        atoms: [H_H2S, S_H2S, X_H2S]
+        temperatures: [256, 270, 286, 303, 323, 343, 370, 400]
+        pressures: [1, 3.2, 10, 32]
+        simulation_file: /mnt/ssd1/andrew/vision-data/data/H2S-high.h5
+
+    n-butane:
+        atoms: [CH3, CH2]
+        temperatures: [256, 270, 286, 303, 323, 343, 370, 400]
+        pressures: [1, 3.2, 10, 32]
+        simulation_file: /mnt/ssd1/andrew/vision-data/data/nButane-high.h5
+
+    i-butane:
+        atoms: [CH3, CH2, CH]
+        temperatures: [256, 270, 286, 303, 323, 343, 370, 400]
+        pressures: [1, 3.2, 10, 32]
+        simulation_file: /mnt/ssd1/andrew/vision-data/data/iButane-high.h5
+
+    Kr:
+        atoms: [Kr]
+        temperatures: [256, 270, 286, 303, 323, 343, 370, 400]
+        pressures: [0.01, 0.032, 0.1, 0.32, 1, 3.2, 10, 32]
+        simulation_file: /mnt/ssd1/andrew/vision-data/data/Kr.h5
+
+    Xe: 
+        atoms: [Xe]
+        temperatures: [256, 270, 286, 303, 323, 343, 370, 400]
+        pressures: [0.01, 0.032, 0.1, 0.32, 1, 3.2, 10, 32]
+        simulation_file: /mnt/ssd1/andrew/vision-data/data/Xe.h5
